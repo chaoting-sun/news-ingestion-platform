@@ -1,0 +1,151 @@
+{% extends "news/base.html" %}
+
+{% block title %}焦點新聞列表 — UDN NBA{% endblock %}
+
+{% block content %}
+<div id="ws-banner" class="ws-banner" style="display:none"></div>
+
+<div id="news-list" class="news-list"></div>
+
+<div id="pagination" class="pagination"></div>
+
+<script>
+(function () {
+  const listEl = document.getElementById("news-list");
+  const paginationEl = document.getElementById("pagination");
+
+  function getPageParam(url) {
+    if (!url) return null;
+    try {
+      return new URL(url).searchParams.get("page");
+    } catch {
+      return null;
+    }
+  }
+
+  function renderArticles(results) {
+    listEl.innerHTML = "";
+    if (results.length === 0) {
+      listEl.innerHTML = '<p class="empty">目前沒有焦點新聞。</p>';
+      return;
+    }
+    results.forEach(function (article) {
+      const card = document.createElement("a");
+      card.href = "/news/" + article.id + "/";
+      card.className = "news-card";
+
+      let thumb = "";
+      if (article.hero_image_url) {
+        thumb = '<img src="' + escapeHtml(article.hero_image_url) + '" alt="" class="news-thumb">';
+      }
+
+      card.innerHTML =
+        thumb +
+        '<div class="news-card-body">' +
+          '<h2 class="news-card-title">' + escapeHtml(article.title) + "</h2>" +
+          '<p class="news-card-meta">' +
+            (article.author ? escapeHtml(article.author) + " · " : "") +
+            formatDate(article.published_at) +
+          "</p>" +
+        "</div>";
+
+      listEl.appendChild(card);
+    });
+  }
+
+  function renderPagination(previous, next) {
+    paginationEl.innerHTML = "";
+
+    if (previous !== null) {
+      const prevBtn = document.createElement("button");
+      prevBtn.textContent = "上一頁";
+      prevBtn.addEventListener("click", function () {
+        const page = getPageParam(previous) || "1";
+        fetchNews(page);
+      });
+      paginationEl.appendChild(prevBtn);
+    }
+
+    if (next !== null) {
+      const nextBtn = document.createElement("button");
+      nextBtn.textContent = "下一頁";
+      nextBtn.addEventListener("click", function () {
+        const page = getPageParam(next);
+        if (page) fetchNews(page);
+      });
+      paginationEl.appendChild(nextBtn);
+    }
+  }
+
+  function fetchNews(page) {
+    listEl.innerHTML = '<p class="loading">載入中…</p>';
+    paginationEl.innerHTML = "";
+
+    fetch("/api/news/?page=" + page)
+      .then(function (res) {
+        if (!res.ok) throw new Error("API error: " + res.status);
+        return res.json();
+      })
+      .then(function (data) {
+        renderArticles(data.results);
+        renderPagination(data.previous, data.next);
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      })
+      .catch(function (err) {
+        listEl.innerHTML = '<p class="error">無法載入新聞：' + err.message + "</p>";
+      });
+  }
+
+  fetchNews(1);
+
+  // --- WebSocket real-time notifications ---
+  const banner = document.getElementById("ws-banner");
+  let newCount = 0;
+  let reconnectDelay = 1000;
+  const maxReconnectDelay = 30000;
+
+  function updateBanner() {
+    if (newCount === 0) {
+      banner.style.display = "none";
+      return;
+    }
+    banner.textContent = newCount + " 則新文章，點擊刷新";
+    banner.style.display = "block";
+  }
+
+  banner.addEventListener("click", function () {
+    newCount = 0;
+    updateBanner();
+    fetchNews(1);
+  });
+
+  function connectWebSocket() {
+    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+    const ws = new WebSocket(protocol + "//" + location.host + "/ws/news/");
+
+    ws.onopen = function () {
+      reconnectDelay = 1000;
+    };
+
+    ws.onmessage = function (e) {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.type === "new_article") {
+          newCount++;
+          updateBanner();
+        }
+      } catch (err) { /* ignore malformed messages */ }
+    };
+
+    ws.onclose = function () {
+      setTimeout(function () {
+        reconnectDelay = Math.min(reconnectDelay * 2, maxReconnectDelay);
+        connectWebSocket();
+      }, reconnectDelay);
+    };
+  }
+
+  connectWebSocket();
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,23 @@
+{% load static %}
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{% block title %}UDN NBA 焦點新聞{% endblock %}</title>
+    <link rel="stylesheet" href="{% static 'news/css/style.css' %}" />
+  </head>
+  <body>
+    <header>
+      <nav>
+        <a href="{% url 'news-list-page' %}" class="site-title"
+          >UDN NBA 焦點新聞</a
+        >
+      </nav>
+    </header>
+
+    <script src="{% static 'news/js/utils.js' %}"></script>
+
+    <main>{% block content %}{% endblock %}</main>
+  </body>
+</html>

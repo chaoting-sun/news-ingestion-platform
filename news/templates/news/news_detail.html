@@ -1,0 +1,49 @@
+{% extends "news/base.html" %} {% block title %}新聞詳情 — UDN NBA{% endblock %}
+{% block content %}
+<a href="{% url 'news-list-page' %}" class="back-link">&larr; 返回列表</a>
+
+<div id="news-detail" class="news-detail" data-pk="{{ pk }}"></div>
+
+<script>
+  (function () {
+    const pk = document.getElementById("news-detail").getAttribute("data-pk");
+    const detailEl = document.getElementById("news-detail");
+
+    detailEl.innerHTML = '<p class="loading">載入中…</p>';
+
+    fetch("/api/news/" + pk + "/")
+      .then(function (res) {
+        if (!res.ok) throw new Error("API error: " + res.status);
+        return res.json();
+      })
+      .then(function (article) {
+        detailEl.innerHTML =
+          '<h1 class="detail-title">' +
+          escapeHtml(article.title) +
+          "</h1>" +
+          '<p class="detail-meta">' +
+          (article.author ? escapeHtml(article.author) + " · " : "") +
+          formatDate(article.published_at) +
+          (article.source_name
+            ? ' · <a href="' +
+              escapeHtml(article.source_url) +
+              '" target="_blank" rel="noopener">' +
+              escapeHtml(article.source_name) +
+              "</a>"
+            : "") +
+          "</p>" +
+          '<div class="detail-content">' +
+          article.content +
+          "</div>";
+
+        detailEl.querySelectorAll("figcaption").forEach(function (el) {
+          el.classList.add("hero-caption");
+        });
+      })
+      .catch(function (err) {
+        detailEl.innerHTML =
+          '<p class="error">無法載入新聞：' + err.message + "</p>";
+      });
+  })();
+</script>
+{% endblock %}
