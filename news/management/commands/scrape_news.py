@@ -1,18 +1,30 @@
 from django.core.management.base import BaseCommand
 
-from news.scraper import run_scraper
+from news.pipeline.runner import run_pipeline
+from news.pipeline.sources import SOURCES
 
 
 class Command(BaseCommand):
-    help = "Scrape 焦點新聞 from UDN NBA index page and save to database"
+    help = "Scrape news articles and save to database"
+
+    def add_arguments(self, parser):
+        parser.add_argument(
+            "--source",
+            default="udn",
+            choices=SOURCES.keys(),
+            help="News source to scrape (default: udn)",
+        )
 
     def handle(self, *args, **options):
-        self.stdout.write("Starting UDN NBA news scraper...")
-        summary = run_scraper()
+        source_name = options["source"]
+        source = SOURCES[source_name]()
+
+        self.stdout.write(f"Starting {source.name} news scraper...")
+        result = run_pipeline(source)
         self.stdout.write(
             self.style.SUCCESS(
-                f"Done: {summary['created']} created, "
-                f"{summary['skipped']} skipped, "
-                f"{summary['failed']} failed"
+                f"Done: {result.created} created, "
+                f"{result.skipped} skipped, "
+                f"{result.failed} failed"
             )
         )
