@@ -1,6 +1,13 @@
+from django.http import HttpResponse
 from django.shortcuts import render
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    CollectorRegistry,
+    generate_latest,
+    multiprocess,
+)
 from rest_framework.generics import ListAPIView, RetrieveAPIView
 
 from .models import News
@@ -28,3 +35,10 @@ def news_list_page(request):
 
 def news_detail_page(request, pk):
     return render(request, "news/news_detail.html", {"pk": pk})
+
+
+def metrics_view(request):
+    """Expose Prometheus metrics at /metrics."""
+    registry = CollectorRegistry()
+    multiprocess.MultiProcessCollector(registry)
+    return HttpResponse(generate_latest(registry), content_type=CONTENT_TYPE_LATEST)

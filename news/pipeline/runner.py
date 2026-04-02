@@ -5,7 +5,12 @@ from django.core.cache import cache
 
 from news.models import News
 from news.pipeline.base import NewsSource
-from news.pipeline.instrument import log_stage, new_run_id
+from news.pipeline.instrument import (
+    ARTICLES_TOTAL,
+    RUN_DURATION,
+    log_stage,
+    new_run_id,
+)
 from news.pipeline.notify import notify
 from news.pipeline.persist import persist
 from news.pipeline.types import PipelineResult
@@ -22,11 +27,15 @@ def run_pipeline(source: NewsSource) -> PipelineResult:
     structlog.contextvars.bind_contextvars(run_id=run_id, source=source.name)
 
     result = PipelineResult()
+    run_start = time.monotonic()
 
     try:
         with log_stage("discover", source=source.name) as ctx:
             urls = source.discover()
             ctx["url_count"] = len(urls)
+            ARTICLES_TOTAL.labels(source=source.name, outcome="discover").inc(
+                len(urls)
+            )
 
         if not urls:
             logger.warning("pipeline.empty", msg="No article URLs found")
@@ -38,6 +47,7 @@ def run_pipeline(source: NewsSource) -> PipelineResult:
             if News.objects.filter(source_url=url).exists():
                 logger.info("pipeline.skip", url=url, reason="duplicate")
                 result.skipped += 1
+                ARTICLES_TOTAL.labels(source=source.name, outcome="skip").inc()
                 continue
 
             # --- fetch ---
@@ -48,6 +58,7 @@ def run_pipeline(source: NewsSource) -> PipelineResult:
                     ctx["content_length"] = len(raw_html)
             except Exception:
                 result.failed += 1
+                ARTICLES_TOTAL.labels(source=source.name, outcome="fail").inc()
                 if delay:
                     time.sleep(delay)
                 continue
@@ -72,6 +83,7 @@ def run_pipeline(source: NewsSource) -> PipelineResult:
                         ctx["missing_fields"] = ["all"]
             except Exception:
                 result.failed += 1
+                ARTICLES_TOTAL.labels(source=source.name, outcome="fail").inc()
                 if delay:
                     time.sleep(delay)
                 continue
@@ -79,6 +91,7 @@ def run_pipeline(source: NewsSource) -> PipelineResult:
             if article is None:
                 logger.warning("parse.returned_none", url=url)
                 result.failed += 1
+                ARTICLES_TOTAL.labels(source=source.name, outcome="fail").inc()
                 if delay:
                     time.sleep(delay)
                 continue
@@ -90,11 +103,18 @@ def run_pipeline(source: NewsSource) -> PipelineResult:
                     if news_obj is None:
                         ctx["outcome"] = "skipped"
                         result.skipped += 1
+                        ARTICLES_TOTAL.labels(
+                            source=source.name, outcome="skip"
+                        ).inc()
                     else:
                         ctx["outcome"] = "created"
                         result.created += 1
+                        ARTICLES_TOTAL.labels(
+                            source=source.name, outcome="create"
+                        ).inc()
             except Exception:
                 result.failed += 1
+                ARTICLES_TOTAL.labels(source=source.name, outcome="fail").inc()
                 if delay:
                     time.sleep(delay)
                 continue
@@ -115,6 +135,9 @@ def run_pipeline(source: NewsSource) -> PipelineResult:
             )
 
     finally:
+        RUN_DURATION.labels(source=source.name).observe(
+            time.monotonic() - run_start
+        )
         structlog.contextvars.unbind_contextvars("run_id", "source")
 
     logger.info(

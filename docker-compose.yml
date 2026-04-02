@@ -24,9 +24,12 @@ services:
     expose:
       - "8000"
     env_file: .env
+    environment:
+      - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus_multiproc
     volumes:
       - .:/app
       - static_data:/app/staticfiles
+      - prometheus_data:/tmp/prometheus_multiproc
     depends_on:
       db:
         condition: service_healthy
@@ -47,8 +50,11 @@ services:
     build: .
     command: celery -A config worker --loglevel=info
     env_file: .env
+    environment:
+      - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus_multiproc
     volumes:
       - .:/app
+      - prometheus_data:/tmp/prometheus_multiproc
     depends_on:
       db:
         condition: service_healthy
@@ -68,3 +74,4 @@ services:
 volumes:
   postgres_data:
   static_data:
+  prometheus_data:
