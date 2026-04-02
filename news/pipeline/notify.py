@@ -1,12 +1,11 @@
-import logging
-
+import structlog
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 
 from news.consumers import GROUP_NAME
 from news.models import News
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 def notify(news_obj: News) -> None:
@@ -14,6 +13,7 @@ def notify(news_obj: News) -> None:
     try:
         channel_layer = get_channel_layer()
         if channel_layer is None:
+            logger.warning("notify.no_channel_layer", article_id=news_obj.id)
             return
         async_to_sync(channel_layer.group_send)(
             GROUP_NAME,
@@ -29,4 +29,6 @@ def notify(news_obj: News) -> None:
             },
         )
     except Exception:
-        logger.exception("Failed to send WebSocket notification")
+        logger.exception(
+            "notify.failed", article_id=news_obj.id, title=news_obj.title
+        )

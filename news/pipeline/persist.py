@@ -1,12 +1,12 @@
 import dataclasses
-import logging
 
+import structlog
 from django.db import IntegrityError
 
 from news.models import News
 from news.pipeline.types import ArticleData
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 def persist(article: ArticleData) -> News | None:
@@ -17,8 +17,10 @@ def persist(article: ArticleData) -> News | None:
     """
     try:
         news_obj = News.objects.create(**dataclasses.asdict(article))
-        logger.info("SAVED: %s", article.title)
+        logger.info("persist.saved", title=article.title, url=article.source_url)
         return news_obj
     except IntegrityError:
-        logger.info("SKIP (race condition duplicate): %s", article.source_url)
+        logger.info(
+            "persist.duplicate", url=article.source_url, reason="race_condition"
+        )
         return None

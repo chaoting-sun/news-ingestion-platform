@@ -1,15 +1,15 @@
 import json
-import logging
 import re
 from datetime import datetime
 from urllib.parse import urlparse, urlunparse
 
 import requests
+import structlog
 from bs4 import BeautifulSoup
 
 from news.pipeline.types import ArticleData
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 INDEX_URL = "http://tw-nba.udn.com/nba/index"
 REQUEST_TIMEOUT = 10
@@ -77,7 +77,7 @@ class UDNSource:
 
         focus = soup.select_one("#focus")
         if not focus:
-            logger.warning("Could not find #focus element on index page")
+            logger.warning("discover.no_focus", msg="Could not find #focus element")
             return []
 
         links = focus.select(".splide__list .splide__slide a[href]")
@@ -88,7 +88,7 @@ class UDNSource:
                 continue
             urls.append(_clean_url(raw_url))
 
-        logger.info("Found %d carousel articles on index page", len(urls))
+        logger.info("discover.complete", url_count=len(urls))
         return urls
 
     def fetch(self, url: str) -> str:
@@ -104,7 +104,7 @@ class UDNSource:
 
         json_ld = _extract_json_ld(soup)
         if not json_ld:
-            logger.warning("No JSON-LD NewsArticle found for %s", url)
+            logger.warning("parse.no_json_ld", url=url)
             return None
 
         title = json_ld.get("headline", "")
@@ -114,7 +114,7 @@ class UDNSource:
 
         pubdate_meta = soup.select_one('meta[name="pubdate"]')
         if not pubdate_meta:
-            logger.warning("No pubdate meta found for %s", url)
+            logger.warning("parse.no_pubdate", url=url)
             return None
         published_at = datetime.fromisoformat(pubdate_meta["content"])
 
@@ -132,7 +132,7 @@ class UDNSource:
         if body_span:
             content = _sanitize_content(body_span)
         else:
-            logger.warning("No article body found for %s", url)
+            logger.warning("parse.no_body", url=url)
 
         return ArticleData(
             title=title,

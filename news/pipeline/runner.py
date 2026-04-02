@@ -1,88 +1,126 @@
-import logging
 import time
 
+import structlog
 from django.core.cache import cache
 
 from news.models import News
 from news.pipeline.base import NewsSource
+from news.pipeline.instrument import log_stage, new_run_id
 from news.pipeline.notify import notify
 from news.pipeline.persist import persist
 from news.pipeline.types import PipelineResult
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 def run_pipeline(source: NewsSource) -> PipelineResult:
     """Run the full scraping pipeline for a given news source.
 
-    Stages: discover → fetch → parse → persist → notify
+    Stages: discover -> fetch -> parse -> persist -> notify
     """
+    run_id = new_run_id()
+    structlog.contextvars.bind_contextvars(run_id=run_id, source=source.name)
+
     result = PipelineResult()
 
-    urls = source.discover()
-    if not urls:
-        logger.warning("[%s] No article URLs found, nothing to scrape", source.name)
-        return result
+    try:
+        with log_stage("discover", source=source.name) as ctx:
+            urls = source.discover()
+            ctx["url_count"] = len(urls)
 
-    delay = getattr(source, "request_delay", 0)
+        if not urls:
+            logger.warning("pipeline.empty", msg="No article URLs found")
+            return result
 
-    for url in urls:
-        if News.objects.filter(source_url=url).exists():
-            logger.info("[%s] SKIP (duplicate): %s", source.name, url)
-            result.skipped += 1
-            continue
+        delay = getattr(source, "request_delay", 0)
 
-        try:
-            raw_html = source.fetch(url)
-        except Exception:
-            logger.exception("[%s] FAILED to fetch %s", source.name, url)
-            result.failed += 1
-            if delay:
-                time.sleep(delay)
-            continue
-
-        try:
-            article = source.parse(url, raw_html)
-        except Exception:
-            logger.exception("[%s] FAILED to parse %s", source.name, url)
-            result.failed += 1
-            if delay:
-                time.sleep(delay)
-            continue
-
-        if article is None:
-            result.failed += 1
-            if delay:
-                time.sleep(delay)
-            continue
-
-        try:
-            news_obj = persist(article)
-            if news_obj is None:
+        for url in urls:
+            if News.objects.filter(source_url=url).exists():
+                logger.info("pipeline.skip", url=url, reason="duplicate")
                 result.skipped += 1
-            else:
-                result.created += 1
-                notify(news_obj)
-        except Exception:
-            logger.exception("[%s] FAILED to persist %s", source.name, url)
-            result.failed += 1
+                continue
 
-        if delay:
-            time.sleep(delay)
+            # --- fetch ---
+            try:
+                with log_stage("fetch", source=source.name, url=url) as ctx:
+                    raw_html = source.fetch(url)
+                    ctx["status_code"] = 200
+                    ctx["content_length"] = len(raw_html)
+            except Exception:
+                result.failed += 1
+                if delay:
+                    time.sleep(delay)
+                continue
 
-    if result.created > 0:
-        cache.clear()
-        logger.info(
-            "[%s] Cache cleared after creating %d new articles",
-            source.name,
-            result.created,
-        )
+            # --- parse ---
+            try:
+                with log_stage("parse", source=source.name, url=url) as ctx:
+                    article = source.parse(url, raw_html)
+                    if article is not None:
+                        extracted = [
+                            f for f in ("title", "author", "content", "hero_image_url")
+                            if getattr(article, f, "")
+                        ]
+                        missing = [
+                            f for f in ("title", "author", "content", "hero_image_url")
+                            if not getattr(article, f, "")
+                        ]
+                        ctx["fields_extracted"] = extracted
+                        ctx["missing_fields"] = missing
+                    else:
+                        ctx["fields_extracted"] = []
+                        ctx["missing_fields"] = ["all"]
+            except Exception:
+                result.failed += 1
+                if delay:
+                    time.sleep(delay)
+                continue
+
+            if article is None:
+                logger.warning("parse.returned_none", url=url)
+                result.failed += 1
+                if delay:
+                    time.sleep(delay)
+                continue
+
+            # --- persist ---
+            try:
+                with log_stage("persist", source=source.name, url=url) as ctx:
+                    news_obj = persist(article)
+                    if news_obj is None:
+                        ctx["outcome"] = "skipped"
+                        result.skipped += 1
+                    else:
+                        ctx["outcome"] = "created"
+                        result.created += 1
+            except Exception:
+                result.failed += 1
+                if delay:
+                    time.sleep(delay)
+                continue
+
+            # --- notify ---
+            if news_obj is not None:
+                with log_stage("notify", source=source.name, article_id=news_obj.id) as ctx:
+                    notify(news_obj)
+                    ctx["delivered"] = True
+
+            if delay:
+                time.sleep(delay)
+
+        if result.created > 0:
+            cache.clear()
+            logger.info(
+                "pipeline.cache_cleared", articles_created=result.created
+            )
+
+    finally:
+        structlog.contextvars.unbind_contextvars("run_id", "source")
 
     logger.info(
-        "[%s] Scraping complete: %d created, %d skipped, %d failed",
-        source.name,
-        result.created,
-        result.skipped,
-        result.failed,
+        "pipeline.finished",
+        created=result.created,
+        skipped=result.skipped,
+        failed=result.failed,
     )
     return result
