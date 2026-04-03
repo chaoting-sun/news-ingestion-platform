@@ -49,8 +49,19 @@ def run_pipeline(source: NewsSource) -> PipelineResult:
         delay = getattr(source, "request_delay", 0)
 
         for url in urls:
-            if News.objects.filter(source_url=url).exists():
-                logger.info("pipeline.skip", url=url, reason="duplicate")
+            # --- dedupe ---
+            try:
+                with log_stage("dedupe", source=source.name, url=url) as ctx:
+                    is_dup = News.objects.filter(source_url=url).exists()
+                    ctx["outcome"] = "skip" if is_dup else "new"
+            except Exception:
+                result.failed += 1
+                ARTICLES_TOTAL.labels(source=source.name, outcome="fail").inc()
+                if delay:
+                    time.sleep(delay)
+                continue
+
+            if is_dup:
                 result.skipped += 1
                 ARTICLES_TOTAL.labels(source=source.name, outcome="skip").inc()
                 continue
