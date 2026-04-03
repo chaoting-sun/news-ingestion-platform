@@ -137,9 +137,12 @@ def run_pipeline(source: NewsSource) -> PipelineResult:
 
             # --- notify ---
             if news_obj is not None:
-                with log_stage("notify", source=source.name, article_id=news_obj.id) as ctx:
-                    notify(news_obj)
-                    ctx["delivered"] = True
+                try:
+                    with log_stage("notify", source=source.name, article_id=news_obj.id) as ctx:
+                        notify(news_obj)
+                        ctx["delivered"] = True
+                except Exception:
+                    pass
 
             if delay:
                 time.sleep(delay)
