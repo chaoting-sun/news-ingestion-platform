@@ -145,10 +145,12 @@ def run_pipeline(source: NewsSource) -> PipelineResult:
                 time.sleep(delay)
 
         if result.created > 0:
-            cache.clear()
-            logger.info(
-                "pipeline.cache_cleared", articles_created=result.created
-            )
+            try:
+                with log_stage("cache_invalidate", source=source.name) as ctx:
+                    cache.clear()
+                    ctx["articles_created"] = result.created
+            except Exception:
+                pass
 
     except Exception as exc:
         run_error = exc
