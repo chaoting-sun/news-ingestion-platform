@@ -25,9 +25,12 @@ def run_pipeline(source: NewsSource) -> PipelineResult:
     """
     run_id = new_run_id()
     structlog.contextvars.bind_contextvars(run_id=run_id, source=source.name)
+    logger.info("pipeline.started")
 
     result = PipelineResult()
     run_start = time.monotonic()
+    input_count = 0
+    run_error = None
 
     try:
         with log_stage("discover", source=source.name) as ctx:
@@ -36,6 +39,8 @@ def run_pipeline(source: NewsSource) -> PipelineResult:
             ARTICLES_TOTAL.labels(source=source.name, outcome="discover").inc(
                 len(urls)
             )
+
+        input_count = len(urls)
 
         if not urls:
             logger.warning("pipeline.empty", msg="No article URLs found")
@@ -134,16 +139,30 @@ def run_pipeline(source: NewsSource) -> PipelineResult:
                 "pipeline.cache_cleared", articles_created=result.created
             )
 
+    except Exception as exc:
+        run_error = exc
+        raise
     finally:
-        RUN_DURATION.labels(source=source.name).observe(
-            time.monotonic() - run_start
+        duration = time.monotonic() - run_start
+        RUN_DURATION.labels(source=source.name).observe(duration)
+
+        if run_error is not None:
+            completion_status = "error"
+        elif result.failed > 0:
+            completion_status = "partial"
+        else:
+            completion_status = "success"
+
+        logger.info(
+            "pipeline.finished",
+            completion_status=completion_status,
+            duration=round(duration, 3),
+            input_count=input_count,
+            created=result.created,
+            skipped=result.skipped,
+            failed=result.failed,
         )
+
         structlog.contextvars.unbind_contextvars("run_id", "source")
 
-    logger.info(
-        "pipeline.finished",
-        created=result.created,
-        skipped=result.skipped,
-        failed=result.failed,
-    )
     return result
