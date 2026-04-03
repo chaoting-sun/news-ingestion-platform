@@ -17,6 +17,17 @@
         return res.json();
       })
       .then(function (article) {
+        let heroHtml = "";
+        if (article.hero_image_url) {
+          heroHtml =
+            '<figure class="hero-figure">' +
+              '<img class="hero-image" src="' + escapeHtml(article.hero_image_url) + '" alt="' + escapeHtml(article.hero_image_caption || "") + '">' +
+              (article.hero_image_caption
+                ? '<figcaption class="hero-caption">' + escapeHtml(article.hero_image_caption) + "</figcaption>"
+                : "") +
+            "</figure>";
+        }
+
         detailEl.innerHTML =
           '<h1 class="detail-title">' +
           escapeHtml(article.title) +
@@ -32,6 +43,7 @@
               "</a>"
             : "") +
           "</p>" +
+          heroHtml +
           '<div class="detail-content">' +
           article.content +
           "</div>";
