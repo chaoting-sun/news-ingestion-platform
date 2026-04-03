@@ -1,0 +1,167 @@
+{
+  "uid": "scraper-pipeline",
+  "title": "Scraper Pipeline",
+  "tags": ["scraper", "pipeline"],
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Articles Processed (rate/min)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(rate(scraper_articles_total[5m])) by (outcome) * 60",
+          "legendFormat": "{{ outcome }}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "pointSize": 5,
+            "lineWidth": 2
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Articles Total by Source & Outcome",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(scraper_articles_total) by (source, outcome)",
+          "legendFormat": "{{ source }} / {{ outcome }}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Stage Duration (p50 / p95 / p99)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(scraper_stage_duration_seconds_bucket[5m])) by (stage, le))",
+          "legendFormat": "p50 {{ stage }}"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(scraper_stage_duration_seconds_bucket[5m])) by (stage, le))",
+          "legendFormat": "p95 {{ stage }}"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(scraper_stage_duration_seconds_bucket[5m])) by (stage, le))",
+          "legendFormat": "p99 {{ stage }}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Stage Errors (rate/min)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(rate(scraper_stage_errors_total[5m])) by (stage, error_type) * 60",
+          "legendFormat": "{{ stage }} / {{ error_type }}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 50,
+            "lineWidth": 1
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Pipeline Run Duration (p50 / p95)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(scraper_run_duration_seconds_bucket[5m])) by (source, le))",
+          "legendFormat": "p50 {{ source }}"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(scraper_run_duration_seconds_bucket[5m])) by (source, le))",
+          "legendFormat": "p95 {{ source }}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2
+          }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Stage Error Rate (errors / total articles)",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(rate(scraper_stage_errors_total[5m])) by (stage) / (sum(rate(scraper_articles_total[5m])) > 0)",
+          "legendFormat": "{{ stage }}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "steps": [
+              { "value": 0, "color": "green" },
+              { "value": 0.05, "color": "yellow" },
+              { "value": 0.2, "color": "red" }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "templating": {
+    "list": []
+  },
+  "schemaVersion": 39
+}
