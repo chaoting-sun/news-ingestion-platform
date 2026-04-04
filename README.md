@@ -4,8 +4,8 @@ A Django-based backend system that performs scheduled news scraping, persists ar
 
 ## Highlights
 
-- **Staged scraping pipeline** — pluggable `NewsSource` protocol with a five-stage runner (`discover → fetch → parse → persist → notify`), making it easy to add new sources
-- **Scheduled scraping with Celery Beat** — hourly two-phase crawl (listing page → article page) with `source_url`-based deduplication
+- **Staged scraping pipeline** — pluggable `NewsSource` protocol with a shared runner (`discover → fetch → parse → persist → notify`); two sources ship out of the box: UDN (HTML scraping via BeautifulSoup) and TSNA (JSON API), each selectable via `--source`
+- **Scheduled scraping with Celery Beat** — hourly scrape of the UDN NBA source by default; TSNA can be added to the schedule or triggered on demand via `manage.py scrape_news --source tsna`, with `source_url`-based deduplication across both
 - **PostgreSQL persistence** — single `News` model with unique constraint for automatic dedup on insert
 - **Redis for cache and message broker** — API response cache (TTL 60 s), Celery broker, and Django Channels layer on one Redis instance isolated by DB number
 - **WebSocket notifications** — browser clients on the list page receive real-time pushes when the scraper ingests new articles
@@ -40,7 +40,7 @@ flowchart LR
 
 **Data flow at a glance:**
 
-1. **Scrape & persist** — Celery Beat dispatches a scraping task every hour via Redis. The Celery Worker runs the staged pipeline (`discover → fetch → parse → persist → notify`) against the UDN NBA source, parsing articles with BeautifulSoup and writing results to PostgreSQL. Duplicate URLs are detected via DB lookup and silently skipped.
+1. **Scrape & persist** — Celery Beat dispatches a scraping task every hour via Redis. The Celery Worker runs the staged pipeline (`discover → fetch → parse → persist → notify`) against a configurable news source — UDN NBA (HTML scraping with BeautifulSoup) by default, or TSNA (JSON API) when specified. Results are written to PostgreSQL; duplicate URLs are detected via DB lookup and silently skipped.
 2. **API & frontend** — Browsers reach Django through Nginx. The frontend calls `GET /api/news/` (paginated list, `content` excluded) and `GET /api/news/<id>/` (full detail) with vanilla JS `fetch()`. Redis caches the list response for 60 seconds.
 3. **Real-time push** — After new articles are persisted, the Worker notifies Django via the Redis Channel Layer. Django forwards the event over WebSocket to all connected browsers, which display a toast without requiring a manual refresh.
 4. **Observability** — Each pipeline stage emits structured JSON logs (via structlog) and Prometheus metrics. Prometheus scrapes the Django `/metrics` endpoint every hour. A pre-provisioned Grafana dashboard visualises article throughput, per-stage latency percentiles, error rates, and pipeline run duration.
@@ -125,13 +125,17 @@ docker compose exec web python manage.py createsuperuser
 
 ### Running the scraper manually
 
-Celery Beat triggers the scraper every hour. To run it on demand:
+Celery Beat triggers the scraper every hour (UDN source by default). To run either source on demand:
 
 ```bash
+# UDN NBA (default)
 docker compose exec web python manage.py scrape_news
+
+# TSNA — fetches recent popular articles via JSON API
+docker compose exec web python manage.py scrape_news --source tsna
 ```
 
-The scraper runs the five-stage pipeline (`discover → fetch → parse → persist → notify`) against the UDN NBA source. A summary of new / skipped / failed articles is printed on completion.
+The scraper runs the staged pipeline (`discover → fetch → parse → persist → notify`) for the selected source. A summary of new / skipped / failed articles is printed on completion.
 
 ### Running tests
 
@@ -269,7 +273,8 @@ news-ingestion-platform/
 │   │   ├── notify.py            #     WebSocket push
 │   │   ├── instrument.py        #     log_stage() context manager, Prometheus metrics
 │   │   └── sources/
-│   │       └── udn.py           #     UDN NBA source implementation
+│   │       ├── udn.py           #     UDN NBA source (HTML scraping via BeautifulSoup)
+│   │       └── tsna.py          #     TSNA source (JSON API)
 │   ├── management/commands/
 │   │   └── scrape_news.py       #   Scraper management command
 │   ├── templates/news/          #   HTML templates
@@ -298,6 +303,8 @@ news-ingestion-platform/
 │   │   ├── 05-instrumentation-plan.md
 │   │   ├── 06-implementation-plan.md
 │   │   └── 07-code-changes.md
+│   ├── source/
+│   │   └── tsna.md              # TSNA API reverse-engineering notes
 │   ├── performance.md           # Load test results and architecture trade-offs
 │   └── tech-choice.md           # Technology decision rationale
 ├── docker-compose.yml           # Docker Compose (8 services)
