@@ -197,6 +197,20 @@ A pre-provisioned **Scraper Pipeline** dashboard is available at `http://localho
 - **Pipeline Run Duration (p50 / p95)** — end-to-end run latency
 - **Stage Error Rate** — gauge showing errors as a percentage of total articles (green / yellow / red thresholds)
 
+### Observability Design Docs
+
+The reasoning behind the instrumentation — from failure mode analysis to the final code changes — is documented step by step in [`docs/observability/`](docs/observability/):
+
+| Document | What it covers |
+| --- | --- |
+| [`01-system-overview.md`](docs/observability/01-system-overview.md) | Pipeline stages and system context |
+| [`02-failure-modes.md`](docs/observability/02-failure-modes.md) | Concrete failure symptoms and SLOs per stage |
+| [`03-signal-requirements.md`](docs/observability/03-signal-requirements.md) | Mapping each failure mode to the signals needed to detect it |
+| [`04-signal-design.md`](docs/observability/04-signal-design.md) | Signal design blueprint (events, metrics, quality enrichments) |
+| [`05-instrumentation-plan.md`](docs/observability/05-instrumentation-plan.md) | Gap audit of existing instrumentation and action items |
+| [`06-implementation-plan.md`](docs/observability/06-implementation-plan.md) | Scoped implementation plan with acceptance criteria |
+| [`07-code-changes.md`](docs/observability/07-code-changes.md) | Per-patch code change instructions and review checklist |
+
 ## Performance Notes
 
 The list API is designed to sustain **100 QPS** with zero errors. Key optimisations:
@@ -275,6 +289,17 @@ news-ingestion-platform/
 │   └── default.conf             # Nginx configuration
 ├── tests/
 │   └── load_test.js             # k6 load-test script
+├── docs/
+│   ├── observability/           # Observability design docs (failure modes → signal design → code changes)
+│   │   ├── 01-system-overview.md
+│   │   ├── 02-failure-modes.md
+│   │   ├── 03-signal-requirements.md
+│   │   ├── 04-signal-design.md
+│   │   ├── 05-instrumentation-plan.md
+│   │   ├── 06-implementation-plan.md
+│   │   └── 07-code-changes.md
+│   ├── performance.md           # Load test results and architecture trade-offs
+│   └── tech-choice.md           # Technology decision rationale
 ├── docker-compose.yml           # Docker Compose (8 services)
 ├── Dockerfile
 ├── entrypoint.sh                # Container startup (migrate + collectstatic + scrape)
