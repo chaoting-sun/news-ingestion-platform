@@ -1,24 +1,25 @@
 # News Ingestion Platform
 
-A Django-based backend system that performs scheduled news scraping, persists articles to PostgreSQL, serves them via a REST API with Redis caching, and pushes real-time WebSocket notifications when new content arrives — all orchestrated through Docker Compose with full observability via structured logging, Prometheus metrics, and Grafana dashboards.
+A Django-based backend that scrapes news on a schedule, persists articles to PostgreSQL, serves them over a REST API with Redis caching, and pushes real-time WebSocket updates as new content lands. The whole stack runs under Docker Compose and is fully instrumented with structured logging, Prometheus metrics, and pre-provisioned Grafana dashboards.
 
 ## Highlights
 
 - **Staged scraping pipeline** — pluggable `NewsSource` protocol with a shared runner (`discover → fetch → parse → persist → notify`); two sources ship out of the box: UDN (HTML scraping via BeautifulSoup) and TSNA (JSON API), each selectable via `--source`
-- **Scheduled scraping with Celery Beat** — hourly scrape of the UDN NBA source by default; TSNA can be added to the schedule or triggered on demand via `manage.py scrape_news --source tsna`, with `source_url`-based deduplication across both
+- **Scheduled scraping with Celery Beat** — the `scrape-udn-nba-news` beat entry dispatches the UDN pipeline hourly; TSNA runs on demand via `manage.py scrape_news --source tsna` (and can be added as a second beat entry), with `source_url`-based deduplication across both
 - **PostgreSQL persistence** — single `News` model with unique constraint for automatic dedup on insert
 - **Redis for cache and message broker** — API response cache (TTL 60 s), Celery broker, and Django Channels layer on one Redis instance isolated by DB number
 - **WebSocket notifications** — browser clients on the list page receive real-time pushes when the scraper ingests new articles
 - **Observability** — structlog JSON logging with per-run correlation IDs, Prometheus counters and histograms exposed at `/metrics`, and a pre-provisioned Grafana dashboard for pipeline health
 - **Docker Compose deployment** — eight-service stack (web, db, redis, celery_worker, celery_beat, nginx, prometheus, grafana) with one-command startup
-- **Load-tested API for 100 QPS** — Gunicorn + Uvicorn multi-worker ASGI setup achieves 99.6 req/s with p95 latency of 34 ms under k6 constant-arrival-rate testing
+- **Load-tested API for 100 QPS** — Gunicorn + Uvicorn multi-worker ASGI setup sustains the target rate with zero errors under k6 constant-arrival-rate testing (numbers in [Performance Notes](#performance-notes))
 
 ## System Architecture
 
 ```mermaid
 flowchart LR
     User["Browser"]
-    UDN["UDN NBA"]
+    UDN["UDN NBA (HTML)"]
+    TSNA["TSNA (JSON API)"]
 
     subgraph Docker Compose
         Nginx --> Django
@@ -30,6 +31,7 @@ flowchart LR
         Beat["Celery Beat"] -- scheduled task --> Redis
         Redis -- dispatch task --> Worker["Celery Worker"]
         Worker -- scrape --> UDN
+        Worker -- scrape --> TSNA
         Worker -- persist articles --> PostgreSQL
         Worker -- push notification --> Redis -- Channel Layer --> Django
     end
@@ -43,7 +45,7 @@ flowchart LR
 1. **Scrape & persist** — Celery Beat dispatches a scraping task every hour via Redis. The Celery Worker runs the staged pipeline (`discover → fetch → parse → persist → notify`) against a configurable news source — UDN NBA (HTML scraping with BeautifulSoup) by default, or TSNA (JSON API) when specified. Results are written to PostgreSQL; duplicate URLs are detected via DB lookup and silently skipped.
 2. **API & frontend** — Browsers reach Django through Nginx. The frontend calls `GET /api/news/` (paginated list, `content` excluded) and `GET /api/news/<id>/` (full detail) with vanilla JS `fetch()`. Redis caches the list response for 60 seconds.
 3. **Real-time push** — After new articles are persisted, the Worker notifies Django via the Redis Channel Layer. Django forwards the event over WebSocket to all connected browsers, which display a toast without requiring a manual refresh.
-4. **Observability** — Each pipeline stage emits structured JSON logs (via structlog) and Prometheus metrics. Prometheus scrapes the Django `/metrics` endpoint every hour. A pre-provisioned Grafana dashboard visualises article throughput, per-stage latency percentiles, error rates, and pipeline run duration.
+4. **Observability** — Each pipeline stage emits structured JSON logs (via structlog) and Prometheus metrics. Prometheus scrapes the Django `/metrics` endpoint on an hourly interval — matched to the hourly scrape cadence, since metrics change only when the pipeline runs; drop to `15s` in `prometheus/prometheus.yml` if you want finer-grained rate panels. A pre-provisioned Grafana dashboard visualises article throughput, per-stage latency percentiles, error rates, and pipeline run duration.
 
 ## Tech Stack
 
@@ -93,7 +95,7 @@ This brings up eight containers:
 | `celery_worker` | Celery Worker (executes scraping tasks) |
 | `celery_beat` | Celery Beat (hourly schedule) |
 | `nginx` | Nginx reverse proxy (port 80) |
-| `prometheus` | Prometheus server (port 9090) — scrapes `/metrics` every 1 h, 3-day retention |
+| `prometheus` | Prometheus server (port 9090) — scrapes `/metrics` every 1 h (matches the scrape cadence), 3-day retention |
 | `grafana` | Grafana dashboards (port 3000) — pre-provisioned with Prometheus datasource |
 
 On first boot the `web` container automatically runs database migrations, collects static files, and performs an initial scrape (see `entrypoint.sh`).
@@ -101,7 +103,6 @@ On first boot the `web` container automatically runs database migrations, collec
 3. **Open the app**
 
 - News list: http://localhost/
-- Django Admin: http://localhost/admin/ (requires a superuser — see below)
 - Prometheus: http://localhost:9090/
 - Grafana: http://localhost:3000/ (default login `admin` / `admin`)
 
@@ -110,6 +111,8 @@ On first boot the `web` container automatically runs database migrations, collec
 ```bash
 docker compose exec web python manage.py createsuperuser
 ```
+
+Then visit http://localhost/admin/ to log in.
 
 ### Environment variables
 
@@ -122,6 +125,8 @@ docker compose exec web python manage.py createsuperuser
 | `POSTGRES_PASSWORD` | Database password | `postgres` |
 | `POSTGRES_HOST` | Database host | `db` |
 | `POSTGRES_PORT` | Database port | `5432` |
+| `REDIS_URL` | Redis connection URL (cache, Celery broker, Channel Layer) | `redis://redis:6379/0` |
+| `ALLOWED_HOSTS` | Comma-separated Django `ALLOWED_HOSTS` | `localhost,127.0.0.1,web,nginx` |
 
 ### Running the scraper manually
 
@@ -143,7 +148,7 @@ The scraper runs the staged pipeline (`discover → fetch → parse → persist 
 docker compose exec web python manage.py test
 ```
 
-Coverage includes model validation and uniqueness constraints, API pagination and 404 handling, and scraper HTML-parsing logic.
+Coverage includes model validation and uniqueness constraints, API pagination and 404 handling, UDN HTML parsing, and TSNA JSON parsing.
 
 ## API Reference
 
@@ -282,7 +287,8 @@ news-ingestion-platform/
 │   ├── tests/                   #   Tests
 │   │   ├── test_models.py
 │   │   ├── test_api.py
-│   │   └── test_scraper.py
+│   │   ├── test_udn_scraper.py
+│   │   └── test_tsna_scraper.py
 │   └── migrations/
 ├── prometheus/
 │   └── prometheus.yml           # Prometheus scrape config (targets Django /metrics)
@@ -315,6 +321,6 @@ news-ingestion-platform/
 └── manage.py
 ```
 
-## Project Origin
+---
 
-This project was originally inspired by a backend take-home assignment and was later extended into an independent side project focused on backend architecture, async task processing, and deployment.
+*Originally inspired by a backend take-home assignment, later extended into an independent side project focused on backend architecture, async task processing, and deployment.*
